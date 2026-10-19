@@ -26,6 +26,19 @@ jobs:
         with:
           arch: x64
 
+      - name: Fail early if the release tag exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QT_VERSION: ${{ inputs.qt_version }}
+          BUILD_NUM: ${{ inputs.build }}
+        run: |
+          TAG="qt-${QT_VERSION}-msvc2022-x64-mt-${BUILD_NUM}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; raise the build number." >&2
+            exit 1
+          fi
+
       - name: Show toolchain
         shell: pwsh
         run: |
@@ -44,6 +57,14 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -QtVersion $env:QT_VERSION -Build $env:BUILD_NUM -WorkDir C:\q -OutDir C:\qout
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Keep the build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qt-static-out
+          path: C:\qout
+          if-no-files-found: warn
+
       - name: Publish release
         shell: bash
         env:
@@ -53,4 +74,5 @@ jobs:
         run: |
           gh release create "qt-${QT_VERSION}-msvc2022-x64-mt-${BUILD_NUM}" /c/qout/* \
             --title "Qt ${QT_VERSION} static (MSVC x64, /MT) build ${BUILD_NUM}" \
+            --target "${{ github.sha }}" \
             --notes-file /c/qout/BUILD-INFO.txt

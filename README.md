@@ -36,7 +36,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 ```
 
-A static Qt needs its platform plugin linked in explicitly:
+A static Qt links its default platform plugin automatically. To add or change plugins (noite also imports the style and image-format plugins explicitly), use `qt_import_plugins`:
 
 ```cmake
 find_package(Qt6 REQUIRED COMPONENTS Widgets)

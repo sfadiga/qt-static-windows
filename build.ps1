@@ -17,6 +17,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'  # PS 5.1 progress bar slows big downloads
+
+# Windows' bsdtar; Git's GNU tar on PATH would mishandle -C C:\q and -a zip output.
+$tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
 
 $parts      = $QtVersion.Split('.')
 $majorMinor = $parts[0] + '.' + $parts[1]
@@ -98,11 +102,11 @@ if ($DryRun) {
     Write-Host '-- DryRun: nothing will be downloaded or built --'
     Write-Host "download  : $tarUrl -> $tarPath"
     Write-Host "verify    : checksum from $shaUrl"
-    Write-Host "extract   : tar -xf $tarPath -C $WorkDir"
+    Write-Host "extract   : $tarExe -xf $tarPath -C $WorkDir"
     Write-Host "configure : (in $buildDir) $configureCmd"
     Write-Host "build     : cmake --build . --parallel"
     Write-Host "install   : cmake --install ."
-    Write-Host "zip       : tar -a -c -f $assetPath -C $installDir ."
+    Write-Host "zip       : $tarExe -a -c -f $assetPath -C $installDir ."
     Write-Host "write     : $(Join-Path $OutDir 'BUILD-INFO.txt'), $(Join-Path $OutDir 'SHA256SUMS.txt')"
     return
 }
@@ -123,7 +127,7 @@ Write-Host "$($expected.Algo) verified: $actual"
 
 # 2. Extract
 if (Test-Path $srcDir) { Remove-Item -Recurse -Force $srcDir }
-Invoke-Native 'tar' @('-xf', $tarPath, '-C', $WorkDir)
+Invoke-Native $tarExe @('-xf', $tarPath, '-C', $WorkDir)
 if (-not (Test-Path $configureExe)) { throw "configure.bat not found at $configureExe" }
 
 # 3. Configure, build, install
@@ -143,12 +147,16 @@ try {
 # 4. Licences (also shipped inside the zip) and BUILD-INFO.txt
 $licSrc = Join-Path $srcDir 'LICENSES'
 if (-not (Test-Path $licSrc)) { throw "LICENSES folder not found in $srcDir" }
-Copy-Item -Recurse -Force $licSrc (Join-Path $installDir 'LICENSES')
+$licDst = Join-Path $installDir 'LICENSES'
+New-Item -ItemType Directory -Force -Path $licDst | Out-Null
+Copy-Item -Recurse -Force (Join-Path $licSrc '*') $licDst
 
 $clOut = (cmd /c "cl 2>&1" | Select-Object -First 1)
 $gitHead = 'unknown'
-$head = (& git -C $PSScriptRoot rev-parse HEAD 2>$null)
-if ($LASTEXITCODE -eq 0 -and $head) { $gitHead = $head }
+try {
+    $head = (cmd /c "git -C ""$PSScriptRoot"" rev-parse HEAD 2>nul")
+    if ($LASTEXITCODE -eq 0 -and $head) { $gitHead = ($head | Select-Object -First 1) }
+} catch { }
 $sdk = $env:WindowsSDKVersion
 if (-not $sdk) { $sdk = 'unknown' }
 
@@ -157,7 +165,7 @@ $info = @(
     "MSVC $clOut",
     "Windows SDK $sdk",
     "configure $configureCmd",
-    "date $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))",
+    "date $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture))",
     "build-repo $gitHead"
 ) -join "`r`n"
 Write-Utf8NoBom (Join-Path $OutDir 'BUILD-INFO.txt') ($info + "`r`n")
@@ -165,7 +173,7 @@ Copy-Item -Force (Join-Path $OutDir 'BUILD-INFO.txt') (Join-Path $installDir 'BU
 
 # 5. Package: zip with the install tree at the root, plus loose licences and the source
 if (Test-Path $assetPath) { Remove-Item -Force $assetPath }
-Invoke-Native 'tar' @('-a', '-c', '-f', $assetPath, '-C', $installDir, '.')
+Invoke-Native $tarExe @('-a', '-c', '-f', $assetPath, '-C', $installDir, '.')
 Get-ChildItem -File $licSrc | Copy-Item -Force -Destination $OutDir
 Copy-Item -Force $tarPath $OutDir
 
