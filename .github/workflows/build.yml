@@ -1,0 +1,56 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      qt_version:
+        description: 'Qt version (for example 6.10.3)'
+        required: true
+        default: '6.10.3'
+      build:
+        description: 'Build number of this Qt version (release tag suffix)'
+        required: true
+        default: '1'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          cl 2>&1 | Select-Object -First 1
+          cmake --version | Select-Object -First 1
+          ninja --version
+          # Perl ships on windows-latest (Strawberry); qtbase only needs it for optional steps.
+          if (Get-Command perl -ErrorAction SilentlyContinue) { perl -v | Select-Object -Skip 1 -First 1 } else { Write-Host 'perl not found (not required for qtbase)' }
+
+      - name: Build static Qt
+        shell: powershell
+        env:
+          QT_VERSION: ${{ inputs.qt_version }}
+          BUILD_NUM: ${{ inputs.build }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -QtVersion $env:QT_VERSION -Build $env:BUILD_NUM -WorkDir C:\q -OutDir C:\qout
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QT_VERSION: ${{ inputs.qt_version }}
+          BUILD_NUM: ${{ inputs.build }}
+        run: |
+          gh release create "qt-${QT_VERSION}-msvc2022-x64-mt-${BUILD_NUM}" /c/qout/* \
+            --title "Qt ${QT_VERSION} static (MSVC x64, /MT) build ${BUILD_NUM}" \
+            --notes-file /c/qout/BUILD-INFO.txt
